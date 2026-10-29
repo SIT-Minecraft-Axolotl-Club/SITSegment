@@ -1,0 +1,10 @@
+prefix: "&3&lSIT-Parkour &8| &f"
+worlds:
+  segment: []
+  onlysprint: []
+points: {}
+holograms: {}
+records: {}
+sessions: {}
+disabled-worlds: []
+spec-disabled-worlds: []

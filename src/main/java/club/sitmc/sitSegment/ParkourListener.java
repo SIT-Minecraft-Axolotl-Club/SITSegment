@@ -1,0 +1,227 @@
+package club.sitmc.sitSegment;
+
+import java.util.UUID;
+import org.bukkit.Location;
+import org.bukkit.Material;
+import org.bukkit.World;
+import org.bukkit.entity.Player;
+import org.bukkit.event.EventHandler;
+import org.bukkit.event.EventPriority;
+import org.bukkit.event.Listener;
+import org.bukkit.event.block.Action;
+import org.bukkit.event.player.PlayerChangedWorldEvent;
+import org.bukkit.event.player.PlayerCommandPreprocessEvent;
+import org.bukkit.event.player.PlayerInteractEvent;
+import org.bukkit.event.player.PlayerJoinEvent;
+import org.bukkit.event.player.PlayerMoveEvent;
+import org.bukkit.event.player.PlayerQuitEvent;
+import org.bukkit.event.player.PlayerTeleportEvent;
+import org.bukkit.event.player.PlayerToggleSneakEvent;
+import org.bukkit.event.world.WorldLoadEvent;
+import org.bukkit.inventory.EquipmentSlot;
+import org.bukkit.inventory.ItemStack;
+
+public class ParkourListener implements Listener {
+    private final ParkourManager manager;
+
+    public ParkourListener(ParkourManager manager) {
+        this.manager = manager;
+    }
+
+    @EventHandler(ignoreCancelled = true)
+    public void onPlayerMove(PlayerMoveEvent event) {
+        Location to = event.getTo();
+        Location from = event.getFrom();
+        if (to == null) {
+            return;
+        }
+        World world = to.getWorld();
+        WorldMode mode = manager.getWorldMode(world);
+        if (mode == WorldMode.NONE) {
+            return;
+        }
+        if (isSameBlock(from, to)) {
+            return;
+        }
+        WorldData data = manager.getWorldData(world);
+        if (data == null) {
+            return;
+        }
+        Player player = event.getPlayer();
+        if (manager.getPracticeSpecManager().isPracticing(player)) {
+            return;
+        }
+        Location start = data.getStart();
+        if (start != null && WorldData.isSameBlock(to, start)) {
+            manager.startRun(player, data);
+            return;
+        }
+        RunSession session = manager.getSession(player.getUniqueId());
+        if (session == null || !session.isStarted()) {
+            return;
+        }
+        Integer expected = session.getNextCheckpointIndex();
+        if (expected != null) {
+            Location checkpoint = data.getCheckpoint(expected);
+            if (checkpoint != null && WorldData.isSameBlock(to, checkpoint)) {
+                manager.reachCheckpoint(player, session, data, expected);
+                return;
+            }
+        }
+        Location end = data.getEnd();
+        if (end != null && WorldData.isSameBlock(to, end)) {
+            manager.tryFinish(player, session);
+        }
+    }
+
+    @EventHandler(ignoreCancelled = true)
+    public void onPlayerToggleSneak(PlayerToggleSneakEvent event) {
+        // Only act when player starts sneaking (not when they stop)
+        if (!event.isSneaking()) {
+            return;
+        }
+        Player player = event.getPlayer();
+        World world = player.getWorld();
+        WorldMode mode = manager.getWorldMode(world);
+        // Only applies to ONLY_SPRINT maps
+        if (mode != WorldMode.ONLY_SPRINT) {
+            return;
+        }
+        // Practice mode exemption (same as tick)
+        if (manager.getPracticeSpecManager().isPracticing(player)) {
+            return;
+        }
+        RunSession session = manager.getSession(player.getUniqueId());
+        if (session == null || !session.isStarted()) {
+            return;
+        }
+        // Skip if player is standing on a checkpoint block
+        WorldData data = manager.getWorldData(world);
+        if (data != null && data.isCheckpointBlock(player.getLocation())) {
+            return;
+        }
+        // Prevent double-fire with tick: if already at last checkpoint, skip
+        Location lastCheckpoint = session.getLastCheckpointLocation();
+        if (lastCheckpoint != null && WorldData.isSameBlock(player.getLocation(), lastCheckpoint)) {
+            return;
+        }
+        manager.teleportToCheckpoint(player, session, "&c潜行中断疾跑，已返回上一个记录点。");
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST)
+    public void onPlayerInteract(PlayerInteractEvent event) {
+        Action action = event.getAction();
+        if (action == Action.RIGHT_CLICK_AIR) {
+            handleRightClick(event);
+            return;
+        }
+        if (action == Action.RIGHT_CLICK_BLOCK) {
+            handleRightClick(event);
+        }
+    }
+
+    @EventHandler
+    public void onCommandPreprocess(PlayerCommandPreprocessEvent event) {
+        manager.getPracticeSpecManager().onCommandPreprocess(event);
+    }
+
+    @EventHandler
+    public void onPlayerQuit(PlayerQuitEvent event) {
+        manager.saveAndRemoveSession(event.getPlayer());
+        manager.getPracticeSpecManager().onQuit(event.getPlayer());
+    }
+
+    @EventHandler
+    public void onWorldChange(PlayerChangedWorldEvent event) {
+        manager.saveAndRemoveSession(event.getPlayer());
+        manager.tryRestoreSession(event.getPlayer());
+        manager.giveDefaultItems(event.getPlayer());
+        manager.getPracticeSpecManager().onWorldChange(event.getPlayer());
+    }
+
+    @EventHandler(ignoreCancelled = true)
+    public void onPlayerTeleport(PlayerTeleportEvent event) {
+        Player player = event.getPlayer();
+        UUID playerId = player.getUniqueId();
+        // Skip if this teleport was triggered by the plugin itself (return item, restart, exit, etc.)
+        if (manager.consumeInternalTeleport(playerId)) {
+            return;
+        }
+        // Only save if player has an active parkour session
+        RunSession session = manager.getSession(playerId);
+        if (session == null || !session.isStarted()) {
+            return;
+        }
+        // Player is being teleported away by an external source — save progress with current location
+        manager.saveAndRemoveSession(player);
+    }
+
+    @EventHandler
+    public void onPlayerJoin(PlayerJoinEvent event) {
+        manager.tryRestoreSession(event.getPlayer());
+        manager.giveDefaultItems(event.getPlayer());
+        manager.getPracticeSpecManager().onJoin(event.getPlayer());
+    }
+
+    @EventHandler
+    public void onWorldLoad(WorldLoadEvent event) {
+        manager.bindWorldData(event.getWorld());
+    }
+
+    private boolean isSameBlock(Location from, Location to) {
+        return from.getBlockX() == to.getBlockX()
+                && from.getBlockY() == to.getBlockY()
+                && from.getBlockZ() == to.getBlockZ();
+    }
+
+    private void handleRightClick(PlayerInteractEvent event) {
+        EquipmentSlot hand = event.getHand();
+        if (hand != EquipmentSlot.HAND) {
+            return;
+        }
+
+        Player player = event.getPlayer();
+        ItemStack item = event.getItem();
+        if (item == null || item.getType() == Material.AIR) {
+            return;
+        }
+
+        if (manager.getPracticeSpecManager().handlePracticeItemInteract(player, item)) {
+            event.setCancelled(true);
+            return;
+        }
+
+        // During practice mode, silently block parkour restart/exit items
+        // to prevent timing/state corruption
+        if (manager.getPracticeSpecManager().isPracticing(player)) {
+            if (manager.getItemUtil().isRestartItem(item) || manager.getItemUtil().isExitItem(item)) {
+                event.setCancelled(true);
+                return;
+            }
+        }
+
+        boolean isReturn = manager.getItemUtil().isReturnItem(item);
+        boolean isRestart = manager.getItemUtil().isRestartItem(item);
+        boolean isExit = manager.getItemUtil().isExitItem(item);
+        if (!isReturn && !isRestart && !isExit) {
+            return;
+        }
+
+        if (isReturn) {
+            event.setCancelled(true);
+            manager.handleReturnItem(player);
+            return;
+        }
+
+        if (isRestart) {
+            event.setCancelled(true);
+            manager.handleRestartItem(player);
+            return;
+        }
+
+        if (isExit) {
+            event.setCancelled(true);
+            manager.handleExitParkour(player);
+        }
+    }
+}
