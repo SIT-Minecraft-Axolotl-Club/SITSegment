@@ -26,6 +26,7 @@ public class PracticeSpecManager {
     private final MessageUtil messages;
     private final ItemUtil itemUtil;
     private final ParkourManager parkourManager;
+    private final PkwsWorldChecker pkwsWorldChecker;
 
     private final Map<UUID, Location> practiceLocations = new HashMap<>();
     private final Map<UUID, SpecState> spectatorStates = new HashMap<>();
@@ -45,6 +46,7 @@ public class PracticeSpecManager {
         this.messages = messages;
         this.itemUtil = itemUtil;
         this.parkourManager = parkourManager;
+        this.pkwsWorldChecker = new PkwsWorldChecker(plugin);
         this.practiceLocationKey = new NamespacedKey(plugin, "practice_location");
         this.practiceFlightEnabledKey = new NamespacedKey(plugin, "practice_flight_enabled");
         this.practicePrevAllowFlightKey = new NamespacedKey(plugin, "practice_prev_allow_flight");
@@ -93,6 +95,10 @@ public class PracticeSpecManager {
         }
         if (!player.hasPermission("sitsegment.command.prac")) {
             messages.send(sender, "&c你没有权限。");
+            return;
+        }
+        if (pkwsWorldChecker.isPkwsWorld(player.getWorld().getName())) {
+            messages.send(sender, "&cPKWS 世界内不可使用练习模式。");
             return;
         }
         if (!isPracticeWorldEnabled(player.getWorld().getName())) {
@@ -253,12 +259,28 @@ public class PracticeSpecManager {
         if (player == null) {
             return;
         }
-        if (getPracticeLocation(player) != null) {
+        if (hasPracticeState(player) && pkwsWorldChecker.isPkwsWorld(player.getWorld().getName())) {
+            clearPracticeStateForPkws(player);
+        } else if (getPracticeLocation(player) != null) {
             itemUtil.givePracticeItems(player);
             applyPracticeFlightState(player);
         }
         getSpectatorState(player);
         if (isPracticing(player) || isSpectating(player)) {
+            setSpecialModeMarker(player);
+        }
+    }
+
+    public void onWorldChange(Player player) {
+        if (player == null || !hasPracticeState(player)) {
+            return;
+        }
+        if (!pkwsWorldChecker.isPkwsWorld(player.getWorld().getName())) {
+            return;
+        }
+
+        clearPracticeStateForPkws(player);
+        if (isSpectating(player)) {
             setSpecialModeMarker(player);
         }
     }
@@ -357,6 +379,41 @@ public class PracticeSpecManager {
         plugin.saveConfig();
     }
 
+    private boolean hasPracticeState(Player player) {
+        UUID uuid = player.getUniqueId();
+        PersistentDataContainer container = player.getPersistentDataContainer();
+        return practiceLocations.containsKey(uuid)
+                || container.has(practiceLocationKey, PersistentDataType.STRING)
+                || container.has(practiceFlightEnabledKey, PersistentDataType.BYTE)
+                || container.has(practicePrevAllowFlightKey, PersistentDataType.BYTE)
+                || container.has(practicePrevFlyingKey, PersistentDataType.BYTE)
+                || itemUtil.hasPracticeReturnItem(player)
+                || itemUtil.hasPracticeExitItem(player)
+                || itemUtil.hasPracticeFlightItem(player);
+    }
+
+    private void clearPracticeStateForPkws(Player player) {
+        PersistentDataContainer container = player.getPersistentDataContainer();
+        boolean hasSavedFlightState = container.has(practicePrevAllowFlightKey, PersistentDataType.BYTE)
+                || container.has(practicePrevFlyingKey, PersistentDataType.BYTE);
+        boolean hasPracticeStorageState = practiceLocations.containsKey(player.getUniqueId())
+                || container.has(practiceLocationKey, PersistentDataType.STRING)
+                || container.has(practiceFlightEnabledKey, PersistentDataType.BYTE)
+                || hasSavedFlightState;
+
+        if (hasSavedFlightState) {
+            restoreOriginalFlightState(player);
+        }
+        clearPracticeLocation(player);
+        clearPracticeFlightState(player);
+        itemUtil.removePracticeItems(player);
+        removeSpecialModeMarker(player);
+
+        if (hasPracticeStorageState) {
+            clearPracticeArtifacts(player);
+        }
+    }
+
     private void exitPractice(Player player, Location saved, boolean teleport, String message) {
         if (teleport && saved != null) {
             parkourManager.markInternalTeleport(player.getUniqueId());
@@ -367,13 +424,17 @@ public class PracticeSpecManager {
         clearPracticeFlightState(player);
         itemUtil.removePracticeItems(player);
         removeSpecialModeMarker(player);
-        // Clear potion effects accumulated during practice
+        clearPracticeArtifacts(player);
+        messages.send(player, message);
+    }
+
+    private void clearPracticeArtifacts(Player player) {
+        // Clear potion effects accumulated during practice.
         for (org.bukkit.potion.PotionEffect effect : player.getActivePotionEffects()) {
             player.removePotionEffect(effect.getType());
         }
-        // Clear boots
+        // Clear boots.
         player.getInventory().setBoots(null);
-        messages.send(player, message);
     }
 
     private void savePracticeLocation(Player player, Location location) {

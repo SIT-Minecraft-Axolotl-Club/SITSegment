@@ -16,6 +16,7 @@ import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerMoveEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.event.player.PlayerTeleportEvent;
+import org.bukkit.event.player.PlayerToggleSneakEvent;
 import org.bukkit.event.world.WorldLoadEvent;
 import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.inventory.ItemStack;
@@ -73,6 +74,40 @@ public class ParkourListener implements Listener {
         }
     }
 
+    @EventHandler(ignoreCancelled = true)
+    public void onPlayerToggleSneak(PlayerToggleSneakEvent event) {
+        // Only act when player starts sneaking (not when they stop)
+        if (!event.isSneaking()) {
+            return;
+        }
+        Player player = event.getPlayer();
+        World world = player.getWorld();
+        WorldMode mode = manager.getWorldMode(world);
+        // Only applies to ONLY_SPRINT maps
+        if (mode != WorldMode.ONLY_SPRINT) {
+            return;
+        }
+        // Practice mode exemption (same as tick)
+        if (manager.getPracticeSpecManager().isPracticing(player)) {
+            return;
+        }
+        RunSession session = manager.getSession(player.getUniqueId());
+        if (session == null || !session.isStarted()) {
+            return;
+        }
+        // Skip if player is standing on a checkpoint block
+        WorldData data = manager.getWorldData(world);
+        if (data != null && data.isCheckpointBlock(player.getLocation())) {
+            return;
+        }
+        // Prevent double-fire with tick: if already at last checkpoint, skip
+        Location lastCheckpoint = session.getLastCheckpointLocation();
+        if (lastCheckpoint != null && WorldData.isSameBlock(player.getLocation(), lastCheckpoint)) {
+            return;
+        }
+        manager.teleportToCheckpoint(player, session, "&c潜行中断疾跑，已返回上一个记录点。");
+    }
+
     @EventHandler(priority = EventPriority.HIGHEST)
     public void onPlayerInteract(PlayerInteractEvent event) {
         Action action = event.getAction();
@@ -101,6 +136,7 @@ public class ParkourListener implements Listener {
         manager.saveAndRemoveSession(event.getPlayer());
         manager.tryRestoreSession(event.getPlayer());
         manager.giveDefaultItems(event.getPlayer());
+        manager.getPracticeSpecManager().onWorldChange(event.getPlayer());
     }
 
     @EventHandler(ignoreCancelled = true)
@@ -153,6 +189,15 @@ public class ParkourListener implements Listener {
         if (manager.getPracticeSpecManager().handlePracticeItemInteract(player, item)) {
             event.setCancelled(true);
             return;
+        }
+
+        // During practice mode, silently block parkour restart/exit items
+        // to prevent timing/state corruption
+        if (manager.getPracticeSpecManager().isPracticing(player)) {
+            if (manager.getItemUtil().isRestartItem(item) || manager.getItemUtil().isExitItem(item)) {
+                event.setCancelled(true);
+                return;
+            }
         }
 
         boolean isReturn = manager.getItemUtil().isReturnItem(item);

@@ -693,7 +693,7 @@ public class ParkourManager {
                 }
                 WorldData data = worldDataMap.get(player.getWorld().getName());
                 if (data != null && !data.isCheckpointBlock(player.getLocation())) {
-                    if (!player.isSprinting()) {
+                    if (!player.isSprinting() || player.isSneaking()) {
                         Location lastCheckpoint = session.getLastCheckpointLocation();
                         if (lastCheckpoint != null && WorldData.isSameBlock(player.getLocation(), lastCheckpoint)) {
                             continue;
@@ -705,7 +705,7 @@ public class ParkourManager {
         }
     }
 
-    private void teleportToCheckpoint(Player player, RunSession session, String message) {
+    void teleportToCheckpoint(Player player, RunSession session, String message) {
         Location target = session.getLastCheckpointLocation();
         if (target == null) {
             messages.send(player, "&c未找到可返回的记录点。");

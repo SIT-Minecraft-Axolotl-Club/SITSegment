@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(Remove-Item \"D:\\\\IntelliJ IDEA\\\\projects\\\\SITSegment-master\\\\src\\\\main\\\\java\\\\club\\\\sitmc\\\\sitSegment\\\\PkwSession.java\")",
+      "Bash(Remove-Item \"D:\\\\IntelliJ IDEA\\\\projects\\\\SITSegment-master\\\\src\\\\main\\\\java\\\\club\\\\sitmc\\\\sitSegment\\\\PkwWorldData.java\")",
+      "Bash(Get-ChildItem -Recurse -Name -File \"D:\\\\IntelliJ IDEA\\\\projects\\\\SITSegment-master\")",
+      "Bash(Select-Object -First 200)",
+      "PowerShell(Get-ChildItem -Recurse -File \"D:\\\\IntelliJ IDEA\\\\projects\\\\SITSegment-master\" | ForEach-Object { $_.FullName.Replace\\(\"D:\\\\IntelliJ IDEA\\\\projects\\\\SITSegment-master\\\\\", \"\"\\) })",
+      "Bash(./gradlew build *)",
+      "Bash(./gradlew.bat compileJava)",
+      "Bash(java *)",
+      "Bash(mvn compile *)",
+      "PowerShell(./gradlew compileJava 2>&1)"
+    ]
+  }
+}
